@@ -3,11 +3,28 @@ let residualChart = null;
 let currentResultId = null;
 let currentDatasetId = null;
 let isDirty = false;
+let smoothedPoints = [];
+let smoothConfig = {
+  enabled: true,
+  method: 'movingAverage',
+  windowSize: 5,
+  polyOrder: 2,
+  dataSource: '手动输入',
+  pointCount: 0
+};
+
+const STORAGE_KEY = 'curve_fit_smooth_config';
 
 const modelTypeLabels = {
   linear: '线性模型',
   exponential: '指数模型',
   quadratic: '二次曲线'
+};
+
+const smoothMethodLabels = {
+  movingAverage: '移动平均',
+  median: '中位数滤波',
+  savitzkyGolay: 'Savitzky-Golay'
 };
 
 function showToast(message, type = 'info') {
@@ -17,6 +34,287 @@ function showToast(message, type = 'info') {
   setTimeout(() => {
     toast.classList.remove('show');
   }, 3000);
+}
+
+function saveSmoothConfig() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(smoothConfig));
+  } catch (e) {
+    console.warn('保存平滑配置失败:', e);
+  }
+}
+
+function loadSmoothConfig() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const config = JSON.parse(saved);
+      smoothConfig = { ...smoothConfig, ...config };
+    }
+  } catch (e) {
+    console.warn('加载平滑配置失败:', e);
+  }
+}
+
+function applySmoothConfigToUI() {
+  document.getElementById('enableSmooth').checked = smoothConfig.enabled;
+  document.querySelector(`input[name="smoothMethod"][value="${smoothConfig.method}"]`).checked = true;
+  document.getElementById('windowSize').value = smoothConfig.windowSize;
+  document.getElementById('windowSizeValue').textContent = smoothConfig.windowSize;
+  document.getElementById('polyOrder').value = smoothConfig.polyOrder;
+  document.getElementById('polyOrderValue').textContent = smoothConfig.polyOrder;
+
+  const polyOrderItem = document.getElementById('polyOrderItem');
+  if (smoothConfig.method === 'savitzkyGolay') {
+    polyOrderItem.style.display = 'flex';
+  } else {
+    polyOrderItem.style.display = 'none';
+  }
+
+  updateSmoothInfoDisplay();
+}
+
+function updateSmoothInfoDisplay() {
+  document.getElementById('smoothPointCount').textContent = smoothConfig.pointCount > 0 ? smoothConfig.pointCount : '—';
+  document.getElementById('smoothDataSource').textContent = smoothConfig.dataSource || '—';
+}
+
+function movingAverageSmooth(points, windowSize) {
+  const n = points.length;
+  const halfWindow = Math.floor(windowSize / 2);
+  const result = [];
+
+  const sortedPoints = [...points].sort((a, b) => a.x - b.x);
+
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.max(0, i - halfWindow); j <= Math.min(n - 1, i + halfWindow); j++) {
+      sum += sortedPoints[j].y;
+      count++;
+    }
+    result.push({ x: sortedPoints[i].x, y: sum / count });
+  }
+
+  return result;
+}
+
+function medianFilterSmooth(points, windowSize) {
+  const n = points.length;
+  const halfWindow = Math.floor(windowSize / 2);
+  const result = [];
+
+  const sortedPoints = [...points].sort((a, b) => a.x - b.x);
+
+  for (let i = 0; i < n; i++) {
+    const windowValues = [];
+    for (let j = Math.max(0, i - halfWindow); j <= Math.min(n - 1, i + halfWindow); j++) {
+      windowValues.push(sortedPoints[j].y);
+    }
+    windowValues.sort((a, b) => a - b);
+    const mid = Math.floor(windowValues.length / 2);
+    const median = windowValues.length % 2 === 0
+      ? (windowValues[mid - 1] + windowValues[mid]) / 2
+      : windowValues[mid];
+    result.push({ x: sortedPoints[i].x, y: median });
+  }
+
+  return result;
+}
+
+function savitzkyGolaySmooth(points, windowSize, polyOrder) {
+  const n = points.length;
+  if (n < windowSize) return [...points];
+
+  const halfWindow = Math.floor(windowSize / 2);
+  const result = [];
+
+  const sortedPoints = [...points].sort((a, b) => a.x - b.x);
+  const ys = sortedPoints.map(p => p.y);
+
+  function vandermonde(x, order) {
+    const m = x.length;
+    const mat = [];
+    for (let i = 0; i < m; i++) {
+      const row = [];
+      for (let j = 0; j <= order; j++) {
+        row.push(Math.pow(x[i], j));
+      }
+      mat.push(row);
+    }
+    return mat;
+  }
+
+  function transpose(mat) {
+    const rows = mat.length;
+    const cols = mat[0].length;
+    const result = [];
+    for (let j = 0; j < cols; j++) {
+      const row = [];
+      for (let i = 0; i < rows; i++) {
+        row.push(mat[i][j]);
+      }
+      result.push(row);
+    }
+    return result;
+  }
+
+  function multiplyMatrices(a, b) {
+    const rowsA = a.length;
+    const colsA = a[0].length;
+    const colsB = b[0].length;
+    const result = [];
+    for (let i = 0; i < rowsA; i++) {
+      const row = [];
+      for (let j = 0; j < colsB; j++) {
+        let sum = 0;
+        for (let k = 0; k < colsA; k++) {
+          sum += a[i][k] * b[k][j];
+        }
+        row.push(sum);
+      }
+      result.push(row);
+    }
+    return result;
+  }
+
+  function invertMatrix(mat) {
+    const n = mat.length;
+    const augmented = [];
+    for (let i = 0; i < n; i++) {
+      const row = [...mat[i]];
+      for (let j = 0; j < n; j++) {
+        row.push(i === j ? 1 : 0);
+      }
+      augmented.push(row);
+    }
+
+    for (let i = 0; i < n; i++) {
+      let maxRow = i;
+      for (let k = i + 1; k < n; k++) {
+        if (Math.abs(augmented[k][i]) > Math.abs(augmented[maxRow][i])) {
+          maxRow = k;
+        }
+      }
+      [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
+
+      const pivot = augmented[i][i];
+      if (Math.abs(pivot) < 1e-10) return null;
+      for (let j = 0; j < 2 * n; j++) {
+        augmented[i][j] /= pivot;
+      }
+
+      for (let k = 0; k < n; k++) {
+        if (k !== i) {
+          const factor = augmented[k][i];
+          for (let j = 0; j < 2 * n; j++) {
+            augmented[k][j] -= factor * augmented[i][j];
+          }
+        }
+      }
+    }
+
+    const inv = [];
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = n; j < 2 * n; j++) {
+        row.push(augmented[i][j]);
+      }
+      inv.push(row);
+    }
+    return inv;
+  }
+
+  const xWindow = [];
+  for (let i = -halfWindow; i <= halfWindow; i++) {
+    xWindow.push(i);
+  }
+  const V = vandermonde(xWindow, polyOrder);
+  const VT = transpose(V);
+  const VTV = multiplyMatrices(VT, V);
+  const VTVInv = invertMatrix(VTV);
+  if (!VTVInv) {
+    return movingAverageSmooth(sortedPoints, windowSize);
+  }
+  const coefMatrix = multiplyMatrices(VTVInv, VT);
+
+  for (let i = 0; i < n; i++) {
+    let smoothedY;
+    if (i < halfWindow || i >= n - halfWindow) {
+      let sum = 0;
+      let count = 0;
+      const start = Math.max(0, i - halfWindow);
+      const end = Math.min(n - 1, i + halfWindow);
+      for (let j = start; j <= end; j++) {
+        sum += ys[j];
+        count++;
+      }
+      smoothedY = sum / count;
+    } else {
+      let y0 = 0;
+      for (let j = 0; j < windowSize; j++) {
+        y0 += coefMatrix[0][j] * ys[i - halfWindow + j];
+      }
+      smoothedY = y0;
+    }
+    result.push({ x: sortedPoints[i].x, y: smoothedY });
+  }
+
+  return result;
+}
+
+function applySmoothing() {
+  const points = getTableData();
+  if (points.length < 2) {
+    showToast('请至少输入2个有效数据点', 'error');
+    return;
+  }
+
+  const method = document.querySelector('input[name="smoothMethod"]:checked').value;
+  const windowSize = parseInt(document.getElementById('windowSize').value);
+  const polyOrder = parseInt(document.getElementById('polyOrder').value);
+
+  smoothConfig.method = method;
+  smoothConfig.windowSize = windowSize;
+  smoothConfig.polyOrder = polyOrder;
+  smoothConfig.pointCount = points.length;
+  smoothConfig.dataSource = document.getElementById('datasetName').value || '手动输入';
+
+  let result;
+  switch (method) {
+    case 'movingAverage':
+      result = movingAverageSmooth(points, windowSize);
+      break;
+    case 'median':
+      result = medianFilterSmooth(points, windowSize);
+      break;
+    case 'savitzkyGolay':
+      result = savitzkyGolaySmooth(points, windowSize, polyOrder);
+      break;
+    default:
+      result = points;
+  }
+
+  smoothedPoints = result;
+  saveSmoothConfig();
+  updateSmoothInfoDisplay();
+  updateChartWithSmoothData();
+  showToast(`已应用${smoothMethodLabels[method]}平滑`, 'success');
+}
+
+function updateChartWithSmoothData() {
+  if (!fitChart) return;
+
+  const originalPoints = getTableData();
+  const normalPoints = [];
+  const outlierPoints = [];
+
+  if (fitChart.data.datasets.length >= 4) {
+    fitChart.data.datasets[0].data = originalPoints;
+    fitChart.data.datasets[1].data = smoothedPoints;
+  }
+
+  fitChart.update();
 }
 
 function updateDatasetButtons() {
@@ -56,6 +354,16 @@ function initCharts() {
           data: [],
           backgroundColor: '#3b82f6',
           borderColor: '#3b82f6',
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          showLine: false,
+          opacity: 0.7
+        },
+        {
+          label: '平滑数据',
+          data: [],
+          backgroundColor: '#10b981',
+          borderColor: '#10b981',
           pointRadius: 7,
           pointHoverRadius: 9,
           showLine: false
@@ -221,6 +529,10 @@ function clearDataTable() {
   }
   currentDatasetId = null;
   currentResultId = null;
+  smoothedPoints = [];
+  smoothConfig.dataSource = '手动输入';
+  smoothConfig.pointCount = 0;
+  updateSmoothInfoDisplay();
   clearDirty();
   resetDisplay();
 }
@@ -283,13 +595,30 @@ function loadSampleData() {
   document.getElementById('datasetName').value = '示例实验数据';
   currentDatasetId = null;
   currentResultId = null;
+  smoothedPoints = [];
+  smoothConfig.dataSource = '示例数据';
+  smoothConfig.pointCount = samples.length;
+  updateSmoothInfoDisplay();
   resetDisplay();
   clearDirty();
   showToast('已加载示例数据', 'success');
 }
 
 async function performFit() {
-  const points = getTableData();
+  const fitDataSource = document.querySelector('input[name="fitDataSource"]:checked').value;
+  const originalPoints = getTableData();
+
+  let points;
+  if (fitDataSource === 'smoothed') {
+    if (smoothedPoints.length === 0) {
+      showToast('请先应用平滑处理', 'error');
+      return;
+    }
+    points = smoothedPoints;
+  } else {
+    points = originalPoints;
+  }
+
   if (points.length < 2) {
     showToast('请至少输入2个有效数据点', 'error');
     return;
@@ -312,9 +641,9 @@ async function performFit() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '拟合失败');
 
-    displayFitResult(data);
+    displayFitResult(data, fitDataSource);
     currentResultId = data.id;
-    showToast('拟合完成！', 'success');
+    showToast(`拟合完成！（使用${fitDataSource === 'smoothed' ? '平滑' : '原始'}数据）`, 'success');
     loadHistory();
   } catch (err) {
     showToast(err.message, 'error');
@@ -324,13 +653,14 @@ async function performFit() {
   }
 }
 
-function displayFitResult(result) {
+function displayFitResult(result, dataSource = 'original') {
   document.getElementById('metricR2').textContent = result.metrics.rSquared.toFixed(6);
   document.getElementById('metricMSE').textContent = result.metrics.mse.toFixed(6);
   document.getElementById('metricRMSE').textContent = result.metrics.rmse.toFixed(6);
   document.getElementById('metricMAE').textContent = result.metrics.mae.toFixed(6);
   document.getElementById('eqFormula').textContent = result.modelEquation;
 
+  const originalPoints = getTableData();
   const normalPoints = [];
   const outlierPoints = [];
   const outlierIndices = new Set(result.outliers.filter(o => o.isOutlier).map(o => o.index));
@@ -343,9 +673,10 @@ function displayFitResult(result) {
     }
   });
 
-  fitChart.data.datasets[0].data = normalPoints;
-  fitChart.data.datasets[1].data = result.curvePoints;
-  fitChart.data.datasets[2].data = outlierPoints;
+  fitChart.data.datasets[0].data = originalPoints;
+  fitChart.data.datasets[1].data = smoothedPoints;
+  fitChart.data.datasets[2].data = result.curvePoints;
+  fitChart.data.datasets[3].data = outlierPoints;
   fitChart.update();
 
   const residualData = result.points.map((p, i) => ({
@@ -422,6 +753,10 @@ async function loadHistoryItem(id) {
     document.getElementById('datasetName').value = data.datasetName;
     document.querySelector(`input[name="modelType"][value="${data.modelType}"]`).checked = true;
     setTableData(data.points);
+    smoothedPoints = [];
+    smoothConfig.dataSource = '历史记录';
+    smoothConfig.pointCount = data.points.length;
+    updateSmoothInfoDisplay();
     displayFitResult(data);
     currentResultId = id;
     currentDatasetId = data.datasetId || null;
@@ -542,6 +877,10 @@ async function loadDataset(id) {
     setTableData(dataset.points);
     currentDatasetId = id;
     currentResultId = null;
+    smoothedPoints = [];
+    smoothConfig.dataSource = dataset.name;
+    smoothConfig.pointCount = dataset.points.length;
+    updateSmoothInfoDisplay();
     resetDisplay();
     clearDirty();
     showToast('已加载数据集', 'success');
@@ -591,12 +930,49 @@ function initEventListeners() {
   document.getElementById('saveDatasetBtn').addEventListener('click', saveCurrentDataset);
   document.getElementById('updateDatasetBtn').addEventListener('click', updateCurrentDataset);
   document.getElementById('datasetName').addEventListener('input', markDirty);
+
+  document.getElementById('applySmoothBtn').addEventListener('click', applySmoothing);
+
+  document.querySelectorAll('input[name="smoothMethod"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const method = radio.value;
+      smoothConfig.method = method;
+      const polyOrderItem = document.getElementById('polyOrderItem');
+      if (method === 'savitzkyGolay') {
+        polyOrderItem.style.display = 'flex';
+      } else {
+        polyOrderItem.style.display = 'none';
+      }
+      saveSmoothConfig();
+    });
+  });
+
+  document.getElementById('windowSize').addEventListener('input', (e) => {
+    const value = parseInt(e.target.value);
+    document.getElementById('windowSizeValue').textContent = value;
+    smoothConfig.windowSize = value;
+    saveSmoothConfig();
+  });
+
+  document.getElementById('polyOrder').addEventListener('input', (e) => {
+    const value = parseInt(e.target.value);
+    document.getElementById('polyOrderValue').textContent = value;
+    smoothConfig.polyOrder = value;
+    saveSmoothConfig();
+  });
+
+  document.getElementById('enableSmooth').addEventListener('change', (e) => {
+    smoothConfig.enabled = e.target.checked;
+    saveSmoothConfig();
+  });
 }
 
 function init() {
+  loadSmoothConfig();
   initCharts();
   initTabs();
   initEventListeners();
+  applySmoothConfigToUI();
   clearDataTable();
   loadHistory();
   loadDatasets();

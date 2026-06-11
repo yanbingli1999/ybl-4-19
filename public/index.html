@@ -43,7 +43,72 @@
         </div>
 
         <div class="panel-section">
-          <h2>🔬 拟合设置</h2>
+          <h2>� 数据平滑</h2>
+          <div class="smooth-toggle">
+            <label class="switch-label">
+              <input type="checkbox" id="enableSmooth" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-text">启用平滑处理</span>
+            </label>
+          </div>
+          <div class="smooth-methods">
+            <label class="smooth-option">
+              <input type="radio" name="smoothMethod" value="movingAverage" checked>
+              <span class="smooth-label">移动平均</span>
+              <span class="smooth-desc">简单均值滤波</span>
+            </label>
+            <label class="smooth-option">
+              <input type="radio" name="smoothMethod" value="median">
+              <span class="smooth-label">中位数滤波</span>
+              <span class="smooth-desc">去除脉冲噪声</span>
+            </label>
+            <label class="smooth-option">
+              <input type="radio" name="smoothMethod" value="savitzkyGolay">
+              <span class="smooth-label">Savitzky-Golay</span>
+              <span class="smooth-desc">保留峰形特征</span>
+            </label>
+          </div>
+          <div class="smooth-params">
+            <div class="param-item">
+              <label class="param-label">窗口大小</label>
+              <div class="param-control">
+                <input type="range" id="windowSize" min="3" max="15" step="2" value="5">
+                <span class="param-value" id="windowSizeValue">5</span>
+              </div>
+            </div>
+            <div class="param-item" id="polyOrderItem" style="display:none;">
+              <label class="param-label">多项式阶数</label>
+              <div class="param-control">
+                <input type="range" id="polyOrder" min="2" max="4" step="1" value="2">
+                <span class="param-value" id="polyOrderValue">2</span>
+              </div>
+            </div>
+          </div>
+          <div class="smooth-info">
+            <div class="info-item">
+              <span class="info-label">处理点位</span>
+              <span class="info-value" id="smoothPointCount">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">数据来源</span>
+              <span class="info-value" id="smoothDataSource">—</span>
+            </div>
+          </div>
+          <button id="applySmoothBtn" class="btn btn-primary btn-block">✨ 应用平滑</button>
+        </div>
+
+        <div class="panel-section">
+          <h2>� 拟合设置</h2>
+          <div class="fit-data-source">
+            <label class="source-option">
+              <input type="radio" name="fitDataSource" value="original" checked>
+              <span class="source-label">使用原始数据拟合</span>
+            </label>
+            <label class="source-option">
+              <input type="radio" name="fitDataSource" value="smoothed">
+              <span class="source-label">使用平滑数据拟合</span>
+            </label>
+          </div>
           <div class="model-selector">
             <label class="model-option">
               <input type="radio" name="modelType" value="linear" checked>
@@ -98,6 +163,7 @@
               <h2>📊 拟合曲线</h2>
               <div class="legend-info">
                 <span class="legend-item"><span class="legend-color" style="background:#3b82f6"></span>原始数据</span>
+                <span class="legend-item"><span class="legend-color" style="background:#10b981"></span>平滑数据</span>
                 <span class="legend-item"><span class="legend-color" style="background:#ef4444"></span>拟合曲线</span>
                 <span class="legend-item"><span class="legend-color" style="background:#f59e0b"></span>异常点</span>
               </div>
