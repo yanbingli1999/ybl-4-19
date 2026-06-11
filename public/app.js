@@ -333,7 +333,24 @@ function updateDatasetButtons() {
 
 function markDirty() {
   isDirty = true;
+  smoothedPoints = [];
+  smoothConfig.pointCount = getTableData().length;
+  updateSmoothInfoDisplay();
+  if (fitChart) {
+    fitChart.data.datasets[1].data = [];
+    fitChart.update();
+  }
   updateDatasetButtons();
+}
+
+function invalidateSmoothCache() {
+  if (smoothedPoints.length > 0) {
+    smoothedPoints = [];
+    if (fitChart) {
+      fitChart.data.datasets[1].data = [];
+      fitChart.update();
+    }
+  }
 }
 
 function clearDirty() {
@@ -627,6 +644,8 @@ async function performFit() {
   const modelType = document.querySelector('input[name="modelType"]:checked').value;
   const datasetName = document.getElementById('datasetName').value || '未命名数据集';
 
+  const smoothPayload = fitDataSource === 'smoothed' ? { ...smoothConfig } : null;
+
   const fitBtn = document.getElementById('fitBtn');
   const originalText = fitBtn.textContent;
   fitBtn.textContent = '⏳ 计算中...';
@@ -636,7 +655,15 @@ async function performFit() {
     const res = await fetch('/api/fit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ points, modelType, datasetName, datasetId: currentDatasetId })
+      body: JSON.stringify({
+        points,
+        modelType,
+        datasetName,
+        datasetId: currentDatasetId,
+        smoothConfig: smoothPayload,
+        fitDataSource,
+        originalPoints: fitDataSource === 'smoothed' ? originalPoints : null
+      })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '拟合失败');
@@ -660,7 +687,17 @@ function displayFitResult(result, dataSource = 'original') {
   document.getElementById('metricMAE').textContent = result.metrics.mae.toFixed(6);
   document.getElementById('eqFormula').textContent = result.modelEquation;
 
-  const originalPoints = getTableData();
+  document.querySelector(`input[name="fitDataSource"][value="${result.fitDataSource || dataSource}"]`).checked = true;
+
+  let displayOriginalPoints;
+  if (result.fitDataSource === 'smoothed' && result.originalPoints && result.originalPoints.length > 0) {
+    displayOriginalPoints = result.originalPoints;
+  } else {
+    displayOriginalPoints = getTableData().length > 0 ? getTableData() : result.points;
+  }
+
+  const displaySmoothedPoints = (result.fitDataSource === 'smoothed') ? result.points : smoothedPoints;
+
   const normalPoints = [];
   const outlierPoints = [];
   const outlierIndices = new Set(result.outliers.filter(o => o.isOutlier).map(o => o.index));
@@ -673,8 +710,8 @@ function displayFitResult(result, dataSource = 'original') {
     }
   });
 
-  fitChart.data.datasets[0].data = originalPoints;
-  fitChart.data.datasets[1].data = smoothedPoints;
+  fitChart.data.datasets[0].data = displayOriginalPoints;
+  fitChart.data.datasets[1].data = displaySmoothedPoints;
   fitChart.data.datasets[2].data = result.curvePoints;
   fitChart.data.datasets[3].data = outlierPoints;
   fitChart.update();
@@ -725,10 +762,17 @@ async function loadHistory() {
       return;
     }
 
-    historyList.innerHTML = history.map(h => `
+    historyList.innerHTML = history.map(h => {
+      let smoothInfo = '';
+      if (h.fitDataSource === 'smoothed' && h.smoothConfig) {
+        const methodLabel = smoothMethodLabels[h.smoothConfig.method] || h.smoothConfig.method;
+        smoothInfo = `<span class="history-model" style="background:rgba(16,185,129,0.1);color:#059669;">${methodLabel}·窗${h.smoothConfig.windowSize}</span>`;
+      }
+      return `
       <div class="history-item" data-id="${h.id}">
         <div class="history-title">${h.datasetName}</div>
         <span class="history-model">${modelTypeLabels[h.modelType] || h.modelType}</span>
+        ${smoothInfo}
         <div class="history-meta">
           <span>${h.pointsCount} 个点 · R²=${h.metrics.rSquared.toFixed(4)}</span>
           <span>${new Date(h.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
@@ -738,7 +782,7 @@ async function loadHistory() {
           <button class="btn-delete" onclick="deleteHistoryItem('${h.id}')">删除</button>
         </div>
       </div>
-    `).join('');
+    `}).join('');
   } catch (err) {
     console.error('加载历史失败:', err);
   }
@@ -752,12 +796,26 @@ async function loadHistoryItem(id) {
 
     document.getElementById('datasetName').value = data.datasetName;
     document.querySelector(`input[name="modelType"][value="${data.modelType}"]`).checked = true;
-    setTableData(data.points);
-    smoothedPoints = [];
+
+    if (data.fitDataSource === 'smoothed' && data.smoothConfig) {
+      smoothConfig = { ...smoothConfig, ...data.smoothConfig };
+      smoothedPoints = [...data.points];
+      if (data.originalPoints && data.originalPoints.length > 0) {
+        setTableData(data.originalPoints);
+      } else {
+        setTableData(data.points);
+      }
+    } else {
+      smoothedPoints = [];
+      setTableData(data.points);
+    }
+
+    applySmoothConfigToUI();
     smoothConfig.dataSource = '历史记录';
     smoothConfig.pointCount = data.points.length;
     updateSmoothInfoDisplay();
-    displayFitResult(data);
+
+    displayFitResult(data, data.fitDataSource || 'original');
     currentResultId = id;
     currentDatasetId = data.datasetId || null;
     clearDirty();
@@ -929,7 +987,10 @@ function initEventListeners() {
   document.getElementById('fitBtn').addEventListener('click', performFit);
   document.getElementById('saveDatasetBtn').addEventListener('click', saveCurrentDataset);
   document.getElementById('updateDatasetBtn').addEventListener('click', updateCurrentDataset);
-  document.getElementById('datasetName').addEventListener('input', markDirty);
+  document.getElementById('datasetName').addEventListener('input', () => {
+    isDirty = true;
+    updateDatasetButtons();
+  });
 
   document.getElementById('applySmoothBtn').addEventListener('click', applySmoothing);
 

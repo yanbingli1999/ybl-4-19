@@ -1,6 +1,6 @@
 [
   {
-    "id": "mq9q9uzrb57fa1heh",
+    "id": "mq9uwui9a18mhgb0y",
     "datasetId": null,
     "datasetName": "示例实验数据",
     "modelType": "linear",
@@ -9,6 +9,57 @@
       "b": 0.7666666666666628
     },
     "modelEquation": "y = 2.070848x + 0.766667",
+    "smoothConfig": {
+      "enabled": true,
+      "method": "movingAverage",
+      "windowSize": 5,
+      "polyOrder": 2,
+      "dataSource": "示例实验数据",
+      "pointCount": 10
+    },
+    "fitDataSource": "smoothed",
+    "originalPoints": [
+      {
+        "x": 1,
+        "y": 2.1
+      },
+      {
+        "x": 2,
+        "y": 3.8
+      },
+      {
+        "x": 3,
+        "y": 6.2
+      },
+      {
+        "x": 4,
+        "y": 7.9
+      },
+      {
+        "x": 5,
+        "y": 10.3
+      },
+      {
+        "x": 6,
+        "y": 11.8
+      },
+      {
+        "x": 7,
+        "y": 14.5
+      },
+      {
+        "x": 8,
+        "y": 25
+      },
+      {
+        "x": 9,
+        "y": 18.2
+      },
+      {
+        "x": 10,
+        "y": 20.1
+      }
+    ],
     "metrics": {
       "rSquared": 0.9838078677278036,
       "mse": 0.5822967272727272,
@@ -533,6 +584,6 @@
         "y": 21.1
       }
     ],
-    "createdAt": "2026-06-11T16:44:36.520Z"
+    "createdAt": "2026-06-11T18:54:27.441Z"
   }
 ]
